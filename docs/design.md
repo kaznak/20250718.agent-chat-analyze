@@ -45,7 +45,7 @@ agent_chat_analyze/
 ├── parsers/
 │   ├── __init__.py
 │   ├── base.py              # パーサーベースクラス
-│   └── claude_code.py       # Claude Code形式パーサー
+│   └── claude_code.py       # Claude Code JSONL形式パーサー
 ├── database/
 │   ├── __init__.py
 │   ├── connection.py        # DuckDB接続管理
@@ -123,7 +123,12 @@ class BaseParser(ABC):
 # parsers/claude_code.py
 class ClaudeCodeParser(BaseParser):
     def parse(self, file_path: Path) -> list[Conversation]:
-        # Claude Code形式の対話ログを解析
+        # Claude Code JSONL形式の対話ログを解析
+        # sessionIdでグループ化してConversationオブジェクトを作成
+        pass
+    
+    def _parse_message_entry(self, entry: dict) -> Optional[Message]:
+        # 個々のJSONLエントリからMessageオブジェクトを作成
         pass
     
     def _extract_feedback(self, message: str) -> list[Feedback]:
@@ -174,24 +179,24 @@ class WorkflowAnalyzer(BaseAnalyzer):
 ### 3.1 テーブル設計
 
 ```sql
--- 対話テーブル
+-- 対話テーブル (sessionIdベースで管理)
 CREATE TABLE conversations (
-    id VARCHAR PRIMARY KEY,
+    id VARCHAR PRIMARY KEY,           -- sessionId
     started_at TIMESTAMP,
     ended_at TIMESTAMP,
     topic VARCHAR,
-    outcome VARCHAR,
+    outcome VARCHAR,                  -- "success" | "failure" | "partial"
     metadata JSON
 );
 
--- メッセージテーブル
+-- メッセージテーブル (Claude Code JSONLエントリから抽出)
 CREATE TABLE messages (
-    id VARCHAR PRIMARY KEY,
-    conversation_id VARCHAR,
-    role VARCHAR,
-    content TEXT,
-    timestamp TIMESTAMP,
-    metadata JSON,
+    id VARCHAR PRIMARY KEY,           -- 自動生成UUID
+    conversation_id VARCHAR,          -- sessionId
+    role VARCHAR,                     -- "user" | "assistant"
+    content TEXT,                     -- 抽出されたテキスト内容
+    timestamp TIMESTAMP,              -- ISO8601形式から変換
+    metadata JSON,                    -- uuid, parentUuid, cwd, version等
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 
@@ -231,6 +236,39 @@ CREATE INDEX idx_feedbacks_conversation_id ON feedbacks(conversation_id);
 CREATE INDEX idx_feedbacks_type ON feedbacks(feedback_type);
 CREATE INDEX idx_analysis_results_type ON analysis_results(analysis_type);
 ```
+
+### 3.3 Claude Code JSONLデータ構造
+
+実際のClaude Code JSONLエントリの構造例：
+
+```json
+{
+  "parentUuid": "user-msg-001",
+  "isSidechain": false,
+  "userType": "external",
+  "cwd": "/home/project",
+  "sessionId": "session-123",
+  "version": "1.0.53",
+  "type": "assistant",
+  "message": {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "実際のレスポンステキスト"
+      }
+    ]
+  },
+  "uuid": "assistant-msg-001",
+  "timestamp": "2024-01-15T10:00:01.000Z"
+}
+```
+
+**解析時の処理**:
+1. `sessionId`でグループ化してConversationを作成
+2. `message.content`配列から`type: "text"`のテキストを抽出
+3. `timestamp`をISO8601形式からdatetimeに変換
+4. `uuid`, `parentUuid`, `cwd`, `version`をmetadataとして保存
 
 ## 4. CLI設計
 

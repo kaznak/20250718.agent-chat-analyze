@@ -9,7 +9,7 @@
 ### 2.1 機能要件
 
 #### FR-001: 対話ログ解析機能
-**WHEN** ユーザーがClaude Code形式の対話ログファイルを指定した場合、
+**WHEN** ユーザーがClaude Code JSONL形式の対話ログファイル（`~/.claude/projects/*/session-id.jsonl`）を指定した場合、
 **THE SYSTEM SHALL** 対話ログを解析してDuckDBに構造化データとして格納する。
 
 #### FR-002: フィードバック傾向分析機能
@@ -49,7 +49,8 @@
 ## 3. システム境界
 
 ### 3.1 対象範囲（In Scope）
-- Claude Code形式の対話ログ解析
+- Claude Code JSONL形式の対話ログ解析（`~/.claude/projects/*/session-id.jsonl`）
+- sessionIdベースの対話グループ化
 - フィードバック傾向分析
 - 作業進展/阻害要因分析
 - プロンプト改善提案
@@ -71,7 +72,20 @@
 - Pydantic（データモデル）
 - pytest（テストフレームワーク）
 
-### 4.2 出力形式
+### 4.2 Claude Code JSONL形式の詳細
+- **保存場所**: `~/.claude/projects/{project-name}/{session-id}.jsonl`
+- **形式**: JSONL（JSON Lines）
+- **主要フィールド**:
+  - `sessionId`: 対話セッションの識別子
+  - `type`: メッセージタイプ（"user" | "assistant"）
+  - `message`: メッセージ内容とロール情報
+  - `timestamp`: ISO8601形式のタイムスタンプ
+  - `uuid`: メッセージの一意識別子
+  - `parentUuid`: 親メッセージの識別子
+  - `cwd`: 作業ディレクトリ
+  - `version`: Claude Codeのバージョン
+
+### 4.3 出力形式
 - マークダウン形式のレポート
 - コンソール出力（進捗表示）
 
@@ -88,7 +102,10 @@
 ## 6. 受入基準
 
 ### 6.1 基本機能
-- [ ] Claude Code形式の対話ログを正常に解析できる
+- [x] Claude Code JSONL形式の対話ログを正常に解析できる
+- [x] sessionIdベースで対話をグループ化できる
+- [x] ISO8601タイムスタンプを正しく解析できる
+- [x] メッセージ内容とメタデータを適切に抽出できる
 - [ ] フィードバック傾向を適切に分析できる
 - [ ] 作業進展/阻害要因を識別できる
 - [ ] 改善プロンプトを生成できる
