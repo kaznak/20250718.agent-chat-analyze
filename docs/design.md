@@ -49,12 +49,17 @@ agent_chat_analyze/
 ├── database/
 │   ├── __init__.py
 │   ├── connection.py        # DuckDB接続管理
-│   ├── schema.py           # データベーススキーマ
-│   └── repository.py       # データアクセス層
+│   ├── schema.py           # データベーススキーマ（ベクトル対応）
+│   └── repository.py       # データアクセス層（ベクトル検索）
+├── embeddings/
+│   ├── __init__.py
+│   ├── base.py              # 埋め込みベースクラス
+│   ├── sentence_transformer.py # SentenceTransformer埋め込み
+│   └── vector_search.py     # ベクトル検索機能
 ├── analyzers/
 │   ├── __init__.py
 │   ├── base.py              # 分析ベースクラス
-│   ├── feedback_analyzer.py # フィードバック分析
+│   ├── feedback_analyzer.py # フィードバック分析（ベクトル使用）
 │   └── workflow_analyzer.py # ワークフロー分析
 ├── reporters/
 │   ├── __init__.py
@@ -78,33 +83,48 @@ class Message:
     content: str
     timestamp: datetime
     metadata: dict[str, Any]
+    embedding: Optional[list[float]] = None  # 384次元ベクトル
+```
 
-@dataclass
-class Conversation:
-    id: str
-    messages: list[Message]
-    started_at: datetime
-    ended_at: datetime
-    topic: str | None
-    outcome: str | None     # "success" | "failure" | "partial"
+#### 2.2.2 埋め込みモジュール (embeddings/)
 
-# models/feedback.py
-@dataclass
-class Feedback:
-    conversation_id: str
-    message_id: str
-    feedback_type: str      # "positive" | "negative" | "request"
-    content: str
-    timestamp: datetime
+```python
+# embeddings/base.py
+class BaseEmbedding(ABC):
+    @abstractmethod
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        pass
+    
+    @abstractmethod
+    def encode_single(self, text: str) -> list[float]:
+        pass
 
-# models/analysis.py
-@dataclass
-class AnalysisResult:
-    conversation_id: str
-    analysis_type: str      # "feedback" | "workflow"
-    findings: list[dict[str, Any]]
-    recommendations: list[str]
-    confidence: float
+# embeddings/sentence_transformer.py
+class SentenceTransformerEmbedding(BaseEmbedding):
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
+        self.model = SentenceTransformer(model_name)
+    
+    def encode(self, texts: list[str]) -> list[list[float]]:
+        return self.model.encode(texts).tolist()
+    
+    def encode_single(self, text: str) -> list[float]:
+        return self.model.encode([text])[0].tolist()
+
+# embeddings/vector_search.py
+class VectorSearchEngine:
+    def __init__(self, repository: Repository):
+        self.repository = repository
+    
+    def find_similar_messages(self, query_embedding: list[float], 
+                            threshold: float = 0.7, 
+                            limit: int = 10) -> list[tuple[Message, float]]:
+        # コサイン類似度によるベクトル検索
+        pass
+    
+    def cluster_by_similarity(self, messages: list[Message], 
+                            threshold: float = 0.8) -> list[list[Message]]:
+        # 類似度に基づくクラスタリング
+        pass
 ```
 
 #### 2.2.2 パーサー (parsers/)
@@ -197,6 +217,7 @@ CREATE TABLE messages (
     content TEXT,                     -- 抽出されたテキスト内容
     timestamp TIMESTAMP,              -- ISO8601形式から変換
     metadata JSON,                    -- uuid, parentUuid, cwd, version等
+    embedding FLOAT[384],             -- 384次元ベクトル埋め込み
     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 
@@ -235,6 +256,9 @@ CREATE INDEX idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX idx_feedbacks_conversation_id ON feedbacks(conversation_id);
 CREATE INDEX idx_feedbacks_type ON feedbacks(feedback_type);
 CREATE INDEX idx_analysis_results_type ON analysis_results(analysis_type);
+
+-- ベクトル検索用HNSWインデックス
+CREATE INDEX idx_messages_embedding ON messages USING HNSW (embedding);
 ```
 
 ### 3.3 Claude Code JSONLデータ構造
@@ -316,25 +340,66 @@ agent-chat-analyze db --cleanup     # データベースクリーンアップ
 
 ## 5. 分析アルゴリズム設計
 
-### 5.1 フィードバック分析
+### 5.1 ベクトル埋め込みベースのフィードバック分析
 
 ```python
-def analyze_feedback_patterns(feedbacks: list[Feedback]) -> dict:
+def analyze_feedback_patterns_with_vectors(messages: list[Message], 
+                                         embedding_engine: BaseEmbedding,
+                                         vector_search: VectorSearchEngine) -> dict:
     """
-    フィードバックパターンの分析
+    ベクトル埋め込みを使用したフィードバックパターンの分析
     
-    1. 感情分析（positive/negative/neutral）
-    2. 頻出キーワード抽出
-    3. 時系列パターン分析
-    4. 改善提案生成
+    1. ベクトル埋め込み生成
+    2. コサイン類似度による意味的クラスタリング
+    3. 参照ベクトルとの類似度計算による感情分析
+    4. 時系列パターン分析
+    5. 改善提案生成
     """
-    patterns = {
-        'sentiment_distribution': analyze_sentiment(feedbacks),
-        'keyword_frequency': extract_keywords(feedbacks),
-        'temporal_patterns': analyze_temporal_patterns(feedbacks),
-        'improvement_suggestions': generate_improvements(feedbacks)
+    
+    # 1. ベクトル埋め込み生成
+    for message in messages:
+        if message.embedding is None:
+            message.embedding = embedding_engine.encode_single(message.content)
+    
+    # 2. 感情分析用参照ベクトル
+    positive_refs = [
+        "素晴らしい実装です",
+        "完璧な解決策です", 
+        "ありがとうございます"
+    ]
+    negative_refs = [
+        "これは不十分です",
+        "問題があります",
+        "改善が必要です"
+    ]
+    
+    positive_embeddings = embedding_engine.encode(positive_refs)
+    negative_embeddings = embedding_engine.encode(negative_refs)
+    
+    # 3. 意味的感情分析
+    sentiment_scores = []
+    for message in messages:
+        pos_similarity = max(cosine_similarity(message.embedding, pos_emb) 
+                           for pos_emb in positive_embeddings)
+        neg_similarity = max(cosine_similarity(message.embedding, neg_emb) 
+                           for neg_emb in negative_embeddings)
+        
+        sentiment_scores.append({
+            'message_id': message.id,
+            'positive_score': pos_similarity,
+            'negative_score': neg_similarity,
+            'sentiment': 'positive' if pos_similarity > neg_similarity else 'negative'
+        })
+    
+    # 4. 類似フィードバッククラスタリング
+    feedback_clusters = vector_search.cluster_by_similarity(messages, threshold=0.8)
+    
+    return {
+        'sentiment_analysis': sentiment_scores,
+        'feedback_clusters': feedback_clusters,
+        'temporal_patterns': analyze_temporal_patterns(messages),
+        'improvement_suggestions': generate_vector_based_improvements(feedback_clusters)
     }
-    return patterns
 ```
 
 ### 5.2 ワークフロー分析
