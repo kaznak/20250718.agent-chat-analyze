@@ -96,6 +96,9 @@ class TestClaudeCodeParser:
         assert conv1.messages[1].role == "assistant"
         assert "新しいプロジェクトの作成" in conv1.messages[1].content
         
+        # Test embedding field exists (should be None initially)
+        assert conv1.messages[0].embedding is None
+        
         # Test second conversation (session test-session-002)
         conv2 = conversations[1]
         assert conv2.id == "test-session-002"
@@ -163,27 +166,27 @@ class TestClaudeCodeParser:
         """Test determining conversation outcome"""
         # Success case
         messages = [
-            Message("user", "データを分析してください", datetime.now(), {}),
-            Message("assistant", "解決方法を提案します", datetime.now(), {}),
-            Message("user", "完璧です！ありがとうございます", datetime.now(), {})
+            Message("user", "データを分析してください", datetime.now(), {}, None),
+            Message("assistant", "解決方法を提案します", datetime.now(), {}, None),
+            Message("user", "完璧です！ありがとうございます", datetime.now(), {}, None)
         ]
         outcome = parser._determine_conversation_outcome(messages)
         assert outcome == "success"
         
         # Partial success case
         messages = [
-            Message("user", "データを分析してください", datetime.now(), {}),
-            Message("assistant", "分析結果を提示します", datetime.now(), {}),
-            Message("user", "普通の結果ですね", datetime.now(), {})
+            Message("user", "データを分析してください", datetime.now(), {}, None),
+            Message("assistant", "分析結果を提示します", datetime.now(), {}, None),
+            Message("user", "普通の結果ですね", datetime.now(), {}, None)
         ]
         outcome = parser._determine_conversation_outcome(messages)
         assert outcome == "partial"
         
         # Failure case
         messages = [
-            Message("user", "データを分析してください", datetime.now(), {}),
-            Message("assistant", "分析結果を提示します", datetime.now(), {}),
-            Message("user", "これは全く役に立ちません", datetime.now(), {})
+            Message("user", "データを分析してください", datetime.now(), {}, None),
+            Message("assistant", "分析結果を提示します", datetime.now(), {}, None),
+            Message("user", "これは全く役に立ちません", datetime.now(), {}, None)
         ]
         outcome = parser._determine_conversation_outcome(messages)
         assert outcome == "failure"
@@ -191,9 +194,9 @@ class TestClaudeCodeParser:
     def test_generate_conversation_topic(self, parser):
         """Test generating conversation topic"""
         messages = [
-            Message("user", "Pythonでデータ分析ツールを作りたいです", datetime.now(), {}),
-            Message("assistant", "データ分析ツールを作成しましょう", datetime.now(), {}),
-            Message("user", "テストを追加したいです", datetime.now(), {})
+            Message("user", "Pythonでデータ分析ツールを作りたいです", datetime.now(), {}, None),
+            Message("assistant", "データ分析ツールを作成しましょう", datetime.now(), {}, None),
+            Message("user", "テストを追加したいです", datetime.now(), {}, None)
         ]
         topic = parser._generate_conversation_topic(messages)
         assert topic is not None

@@ -80,15 +80,16 @@ class Repository:
         message_id = str(uuid.uuid4())
         conn = self.db_manager.get_connection()
         conn.execute("""
-            INSERT INTO messages (id, conversation_id, role, content, timestamp, metadata)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO messages (id, conversation_id, role, content, timestamp, metadata, embedding)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             message_id,
             conversation_id,
             message.role,
             message.content,
             message.timestamp,
-            json.dumps(message.metadata)
+            json.dumps(message.metadata),
+            message.embedding
         ))
         conn.commit()
         return message_id
@@ -104,7 +105,7 @@ class Repository:
         """
         conn = self.db_manager.get_connection()
         result = conn.execute("""
-            SELECT role, content, timestamp, metadata
+            SELECT role, content, timestamp, metadata, embedding
             FROM messages
             WHERE id = ?
         """, (message_id,)).fetchone()
@@ -116,7 +117,8 @@ class Repository:
             role=result[0],
             content=result[1],
             timestamp=result[2],
-            metadata=json.loads(result[3])
+            metadata=json.loads(result[3]),
+            embedding=result[4]
         )
     
     def insert_feedback(self, feedback: Feedback) -> str:
@@ -283,3 +285,117 @@ class Repository:
             ))
         
         return feedbacks
+    
+    def get_messages_by_conversation(self, conversation_id: str) -> List[Message]:
+        """Get all messages for a conversation
+        
+        Args:
+            conversation_id: Conversation ID
+            
+        Returns:
+            List of Message objects
+        """
+        conn = self.db_manager.get_connection()
+        results = conn.execute("""
+            SELECT role, content, timestamp, metadata, embedding
+            FROM messages
+            WHERE conversation_id = ?
+            ORDER BY timestamp
+        """, (conversation_id,)).fetchall()
+        
+        messages = []
+        for result in results:
+            messages.append(Message(
+                role=result[0],
+                content=result[1],
+                timestamp=result[2],
+                metadata=json.loads(result[3]),
+                embedding=result[4]
+            ))
+        
+        return messages
+    
+    def get_all_messages_with_embeddings(self) -> List[Message]:
+        """Get all messages that have embeddings
+        
+        Returns:
+            List of Message objects with embeddings
+        """
+        conn = self.db_manager.get_connection()
+        results = conn.execute("""
+            SELECT role, content, timestamp, metadata, embedding
+            FROM messages
+            WHERE embedding IS NOT NULL
+            ORDER BY timestamp
+        """).fetchall()
+        
+        messages = []
+        for result in results:
+            messages.append(Message(
+                role=result[0],
+                content=result[1],
+                timestamp=result[2],
+                metadata=json.loads(result[3]),
+                embedding=result[4]
+            ))
+        
+        return messages
+    
+    def update_message_embedding(self, message_id: str, embedding: List[float]) -> None:
+        """Update message embedding
+        
+        Args:
+            message_id: Message ID to update
+            embedding: Embedding vector
+        """
+        conn = self.db_manager.get_connection()
+        conn.execute("""
+            UPDATE messages
+            SET embedding = ?
+            WHERE id = ?
+        """, (embedding, message_id))
+        conn.commit()
+    
+    def find_similar_messages_by_embedding(self, 
+                                         query_embedding: List[float], 
+                                         limit: int = 10) -> List[Message]:
+        """Find similar messages using cosine similarity
+        
+        Args:
+            query_embedding: Query embedding vector
+            limit: Maximum number of results
+            
+        Returns:
+            List of similar Message objects
+        """
+        conn = self.db_manager.get_connection()
+        
+        # Convert query embedding to SQL array format
+        query_str = "[" + ",".join(map(str, query_embedding)) + "]"
+        
+        try:
+            # Use DuckDB's array_cosine_similarity function if available
+            results = conn.execute(f"""
+                SELECT role, content, timestamp, metadata, embedding,
+                       array_cosine_similarity(embedding, {query_str}::FLOAT[384]) as similarity
+                FROM messages
+                WHERE embedding IS NOT NULL
+                ORDER BY similarity DESC
+                LIMIT ?
+            """, (limit,)).fetchall()
+            
+            messages = []
+            for result in results:
+                messages.append(Message(
+                    role=result[0],
+                    content=result[1],
+                    timestamp=result[2],
+                    metadata=json.loads(result[3]),
+                    embedding=result[4]
+                ))
+            
+            return messages
+            
+        except Exception:
+            # Fallback to getting all messages for similarity calculation
+            return self.get_all_messages_with_embeddings()[:limit]

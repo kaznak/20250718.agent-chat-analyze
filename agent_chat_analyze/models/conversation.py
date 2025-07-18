@@ -12,6 +12,7 @@ class Message:
     content: str
     timestamp: datetime
     metadata: dict[str, Any]
+    embedding: Optional[list[float]] = None  # 384-dimensional vector
 
 
 @dataclass

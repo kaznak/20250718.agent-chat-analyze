@@ -21,7 +21,7 @@ def initialize_schema(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     
-    # Create messages table
+    # Create messages table with vector embeddings
     conn.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id VARCHAR PRIMARY KEY,
@@ -30,6 +30,7 @@ def initialize_schema(conn: duckdb.DuckDBPyConnection) -> None:
             content TEXT,
             timestamp TIMESTAMP,
             metadata JSON,
+            embedding FLOAT[384],  -- 384-dimensional embedding vector
             FOREIGN KEY (conversation_id) REFERENCES conversations(id)
         )
     """)
@@ -92,5 +93,16 @@ def initialize_schema(conn: duckdb.DuckDBPyConnection) -> None:
         CREATE INDEX IF NOT EXISTS idx_analysis_results_type 
         ON analysis_results(analysis_type)
     """)
+    
+    # Create vector index for embeddings (requires DuckDB extension)
+    try:
+        conn.execute("LOAD 'spatial';")
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_embedding 
+            ON messages USING HNSW (embedding)
+        """)
+    except Exception:
+        # HNSW index may not be available in all DuckDB versions
+        pass
     
     conn.commit()
