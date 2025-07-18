@@ -7,9 +7,15 @@ from typing import Optional
 
 from .database import DatabaseManager
 from .parsers import ClaudeCodeParser
-from .embeddings import SentenceTransformerEmbedding
-from .analyzers import FeedbackAnalyzer, WorkflowAnalyzer
 from .reporters import MarkdownReporter
+
+# Conditional imports for ML dependencies
+try:
+    from .embeddings import SentenceTransformerEmbedding
+    from .analyzers import FeedbackAnalyzer, WorkflowAnalyzer
+    EMBEDDINGS_AVAILABLE = True
+except ImportError:
+    EMBEDDINGS_AVAILABLE = False
 
 
 @click.group()
@@ -43,7 +49,7 @@ def analyze(input_path: str, output_path: str, analysis_type: str, db_path: str)
         # データベース初期化
         click.echo("データベースを初期化しています...")
         db_manager = DatabaseManager(db_path)
-        db_manager.initialize()
+        db_manager.initialize_database()
         
         # パーサーで対話ログを解析
         click.echo("対話ログを解析しています...")
@@ -51,9 +57,21 @@ def analyze(input_path: str, output_path: str, analysis_type: str, db_path: str)
         conversations = parser.parse(input_file)
         click.echo(f"✓ {len(conversations)} 個の対話を解析しました")
         
+        # ML依存関係の確認
+        if not EMBEDDINGS_AVAILABLE and analysis_type in ['feedback', 'all']:
+            click.echo("⚠️ 機械学習ライブラリが利用できません。", err=True)
+            click.echo("フィードバック分析には sentence-transformers と scikit-learn が必要です。", err=True)
+            click.echo("インストールコマンド: pip install sentence-transformers scikit-learn", err=True)
+            if analysis_type == 'feedback':
+                return
+            else:
+                click.echo("ワークフロー分析のみ実行します...")
+                analysis_type = 'workflow'
+        
         # 埋め込みモデルを初期化
-        click.echo("埋め込みモデルを読み込んでいます...")
-        embedding_model = SentenceTransformerEmbedding()
+        if analysis_type in ['feedback', 'all']:
+            click.echo("埋め込みモデルを読み込んでいます...")
+            embedding_model = SentenceTransformerEmbedding()
         
         # メッセージに埋め込みを生成
         click.echo("ベクトル埋め込みを生成しています...")
@@ -233,7 +251,7 @@ def init(db_path: str):
     """データベースを初期化"""
     try:
         db_manager = DatabaseManager(db_path)
-        db_manager.initialize()
+        db_manager.initialize_database()
         click.echo(f"✅ データベースを初期化しました: {db_path}")
     except Exception as e:
         click.echo(f"エラー: {str(e)}", err=True)

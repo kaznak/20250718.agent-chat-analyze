@@ -149,11 +149,12 @@ class TestClaudeCodeParser:
         assert len(feedbacks) == 0
     
     def test_parse_timestamp(self, parser):
-        """Test parsing timestamp from log"""
-        timestamp_str = "### 2024-01-15 10:00:00"
+        """Test parsing timestamp from ISO format"""
+        timestamp_str = "2024-01-15T10:00:00.000Z"
         result = parser._parse_timestamp(timestamp_str)
         
-        assert result == datetime(2024, 1, 15, 10, 0, 0)
+        expected = datetime(2024, 1, 15, 10, 0, 0).replace(tzinfo=None)
+        assert result.replace(tzinfo=None) == expected
     
     def test_parse_invalid_timestamp(self, parser):
         """Test parsing invalid timestamp"""
